@@ -79,6 +79,15 @@ def fix_enum_prop(component: dict[str, Any]):
             continue
         if 'required' not in prop:
             prop['required'] = True
+
+        if 'time' in k.lower() and not 'format' in prop:
+            if prop['type'] == 'string':
+                prop['format'] = 'date-time'
+            if prop['type'] == 'integer':
+                prop['format'] = 'int64'
+        if (k.endswith('id') or k in ['orderno']) and not 'format' in prop and prop['type'] == 'integer':
+            prop['format'] = 'int64'
+
         name = prop['name'] if 'name' in prop else ""
         if 'enum' in prop:
             values = prop['enum']
