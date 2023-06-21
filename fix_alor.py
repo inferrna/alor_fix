@@ -22,6 +22,24 @@ for k in swagga["paths"]:
             swagga["paths"][k][kt]["tags"] = new_tags
 print(all_tag_descriptions)
 
+
+def find_short_description(dt: dict[str, Any], path: str):
+    if not type(dt) is dict:
+        return True
+
+    do_report = 'type' in dt and not dt['type'] in ['array', 'object']
+    for k, v in dt.items():
+        do_report &= find_short_description(v, path+"->"+k)
+
+    if do_report:
+        if 'description' not in dt:
+            print(f'Нет описания для {path}')
+        elif type(dt['description']) is str and len(dt['description'])<2:
+            print(f'Пустое описание для {path}')
+    return False
+
+find_short_description(swagga, "root")
+
 tags = []
 for desc, tag in tagged_descriptions.items():
     tags.append({'name': tag, 'description': desc})
