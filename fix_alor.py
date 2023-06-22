@@ -103,18 +103,23 @@ def fix_enum_prop(component: dict[str, Any]):
                 prop['format'] = 'date-time'
             if prop['type'] == 'integer':
                 prop['format'] = 'int64'
-        if (k.endswith('id') or k in ['orderno']) and not 'format' in prop and prop['type'] == 'integer':
+        if (k.endswith('id') or k in ['orderno', 'from', 'to']) and not 'format' in prop and prop['type'] == 'integer':
             prop['format'] = 'int64'
 
         name = prop['name'] if 'name' in prop else ""
-        if 'enum' in prop:
+        is_bool = 'type' in prop and prop['type'] == 'boolean'
+        if 'enum' in prop and not is_bool:
             values = prop['enum']
             #all_enums.add(tuple(values))
             found_enum = get_known_enum(values)
 
             if found_enum is None:
-                found_enum = k.capitalize()+"Enum"
-                add_new_enum(found_enum, values)
+                if set(values) == {"true", "false"}:
+                    new_properties[k]['type'] = "boolean"
+                    new_properties[k].pop('enum')
+                else:
+                    found_enum = k.capitalize()+"Enum"
+                    add_new_enum(found_enum, values)
 
             if found_enum is not None:
                 print("Enum was found")
