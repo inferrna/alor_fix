@@ -82,6 +82,10 @@ def get_known_enum(values: list[str]) -> str|None:
 
 exnames = ["exchange", "Exchange"]
 fmnames = ["format", "Format"]
+
+def field_is_int64(field_name: str) -> bool:
+    return (field_name.endswith('id') or field_name in ['orderno', 'from', 'to', 'prev', 'next'])
+
 def fix_enum_prop(component: dict[str, Any]):
     #print(f"Fixing {component}")
     if type(component) is list:
@@ -91,6 +95,12 @@ def fix_enum_prop(component: dict[str, Any]):
         return
 
     new_properties = component
+
+    if 'schema' in new_properties and 'name' in new_properties:
+        prop = new_properties['schema']
+        if field_is_int64(new_properties['name']) and not 'format' in prop and prop['type'] == 'integer':
+            new_properties['schema']['format'] = 'int64'
+        
 
     for k, prop in component.items():
         if not type(prop) is dict:
@@ -103,7 +113,7 @@ def fix_enum_prop(component: dict[str, Any]):
                 prop['format'] = 'date-time'
             if prop['type'] == 'integer':
                 prop['format'] = 'int64'
-        if (k.endswith('id') or k in ['orderno', 'from', 'to']) and not 'format' in prop and prop['type'] == 'integer':
+        if field_is_int64(k) and not 'format' in prop and prop['type'] == 'integer':
             prop['format'] = 'int64'
 
         name = prop['name'] if 'name' in prop else ""
@@ -146,7 +156,7 @@ for req_url, req_desc in swagga['paths'].items():
     #print(req_desc)
     for method, component in req_desc.items():
         if 'parameters' in component:
-            print(f"Found props for {req_url}")
+            print(f"Found params for {req_url}")
             fix_enum_prop(component['parameters'])
 
 print(all_enums)
