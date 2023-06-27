@@ -84,10 +84,24 @@ exnames = ["exchange", "Exchange"]
 fmnames = ["format", "Format"]
 
 
+
+def has_key_value(schm: dict, key: str, vals: list[str]) -> bool:
+    return (key in schm and schm[key] in vals) or (has_key_value(schm['schema'], key, vals) if 'schema' in schm else False)
+
 def field_is_int64(field_name: str) -> bool:
     return (field_name.endswith('id') or field_name in ['orderno', 'from', 'to', 'prev', 'next'])
+
 def schema_is_int64(schm: dict) -> bool:
-    return 'description' in schm and 'UTC' in schm['description']
+    return ('description' in schm and 'UTC' in schm['description'] and has_key_value(schm, 'type', ['integer', 'number'])) or (has_key_value(schm, 'type', ['string']) and has_key_value(schm, 'format', ['integer']))
+
+def fix_schema_int64(schm: dict):
+    if 'type' in schm:
+        print(f'Fixing {schm}')
+        schm['type'] = 'integer'
+        schm['format'] = 'int64'
+    elif 'schema' in schm:
+        print(f'2nd fixing {schm}')
+        fix_schema_int64(schm['schema'])
 
 def fix_enum_prop(component: dict[str, Any]):
     #print(f"Fixing {component}")
@@ -103,6 +117,9 @@ def fix_enum_prop(component: dict[str, Any]):
         prop = new_properties['schema']
         if field_is_int64(new_properties['name']) and not 'format' in prop and prop['type'] == 'integer':
             new_properties['schema']['format'] = 'int64'
+
+    if schema_is_int64(component):
+        fix_schema_int64(component)
         
 
     for k, prop in new_properties.items():
@@ -116,9 +133,8 @@ def fix_enum_prop(component: dict[str, Any]):
                 prop['format'] = 'date-time'
             if prop['type'] == 'integer':
                 prop['format'] = 'int64'
-        if (field_is_int64(k) and not 'format' in prop and prop['type'] == 'integer') or (schema_is_int64(prop) and prop['type'] in ['integer', 'number']):
-            prop['format'] = 'int64'
-            prop['type'] = 'integer'
+        if field_is_int64(k) and not 'format' in prop and has_key_value(prop, 'type', ['integer']):
+            fix_schema_int64(prop)
 
         name = prop['name'] if 'name' in prop else ""
         is_bool = 'type' in prop and prop['type'] == 'boolean'
