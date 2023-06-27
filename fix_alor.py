@@ -83,8 +83,11 @@ def get_known_enum(values: list[str]) -> str|None:
 exnames = ["exchange", "Exchange"]
 fmnames = ["format", "Format"]
 
+
 def field_is_int64(field_name: str) -> bool:
     return (field_name.endswith('id') or field_name in ['orderno', 'from', 'to', 'prev', 'next'])
+def schema_is_int64(schm: dict) -> bool:
+    return 'description' in schm and 'UTC' in schm['description']
 
 def fix_enum_prop(component: dict[str, Any]):
     #print(f"Fixing {component}")
@@ -102,10 +105,10 @@ def fix_enum_prop(component: dict[str, Any]):
             new_properties['schema']['format'] = 'int64'
         
 
-    for k, prop in component.items():
+    for k, prop in new_properties.items():
         if not type(prop) is dict:
             continue
-        if 'required' not in prop:
+        if 'required' not in prop and 'nullable' not in prop:
             prop['required'] = True
 
         if 'time' in k.lower() and not 'format' in prop:
@@ -113,8 +116,9 @@ def fix_enum_prop(component: dict[str, Any]):
                 prop['format'] = 'date-time'
             if prop['type'] == 'integer':
                 prop['format'] = 'int64'
-        if field_is_int64(k) and not 'format' in prop and prop['type'] == 'integer':
+        if (field_is_int64(k) and not 'format' in prop and prop['type'] == 'integer') or (schema_is_int64(prop) and prop['type'] in ['integer', 'number']):
             prop['format'] = 'int64'
+            prop['type'] = 'integer'
 
         name = prop['name'] if 'name' in prop else ""
         is_bool = 'type' in prop and prop['type'] == 'boolean'
@@ -147,7 +151,6 @@ def fix_enum_prop(component: dict[str, Any]):
 
 
 known_components = [(k, v) for k, v in swagga['components']['schemas'].items()]
-
 for k, component in known_components:
     if 'properties' in component:
         fix_enum_prop(component['properties'])
