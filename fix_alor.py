@@ -3,12 +3,21 @@ from typing import Any
 
 swagga = yaml.safe_load(open("WarpOpenAPIv2.yml", "r"))
 
-tagged_descriptions = {'Ценные бумаги / инструменты': 'securities',
+tagged_descriptions = {
+ 'Ценные бумаги / инструменты': 'securities',
+ 'Instruments': 'securities',
  'Работа с заявками': 'orders',
+ 'Orders': 'orders',
  'Информация о клиенте': 'users',
+ 'ClientInfo': 'users',
  'Подписки и события (WebSocket)': 'subscriptions',
+ 'Subscriptions': 'subscriptions',
+ 'Deprecated': 'Deprecated', 
  'Другое': 'other', 
- 'Стоп-заявки v2 (beta)': 'v2orders' }
+ 'Other': 'other', 
+ 'Стоп-заявки v2 (beta)': 'v2orders',
+ 'StopOrdersV2': 'v2orders',
+ 'Стоп-заявки v2': 'v2orders' }
 
 all_tag_descriptions = set()
 for k in swagga["paths"]:
@@ -16,7 +25,7 @@ for k in swagga["paths"]:
         if "tags" in swagga["paths"][k][kt]:
             new_tags = []
             for desc in swagga["paths"][k][kt]["tags"]:
-                assert desc in tagged_descriptions, f'не найден тег для {found_desc}'
+                assert desc in tagged_descriptions, f'не найден тег для {desc}'
                 new_tags.append(tagged_descriptions[desc])
                 #all_tag_descriptions.add(desc) # Uncomment to collect all possible descriptions
             swagga["paths"][k][kt]["tags"] = new_tags
@@ -89,7 +98,7 @@ def has_key_value(schm: dict, key: str, vals: list[str]) -> bool:
     return (key in schm and schm[key] in vals) or (has_key_value(schm['schema'], key, vals) if 'schema' in schm else False)
 
 def field_is_int64(field_name: str) -> bool:
-    return (field_name.endswith('id') or field_name in ['orderno', 'from', 'to', 'prev', 'next'])
+    return (field_name.lower().endswith('id') or field_name in ['orderno', 'from', 'to', 'prev', 'next', 'volume'])
 
 def schema_is_int64(schm: dict) -> bool:
     return ('description' in schm and 'UTC' in schm['description'] and has_key_value(schm, 'type', ['integer', 'number'])) or (has_key_value(schm, 'type', ['string']) and has_key_value(schm, 'format', ['integer']))
@@ -118,6 +127,8 @@ def fix_enum_prop(component: dict[str, Any]):
         if field_is_int64(new_properties['name']) and not 'format' in prop and prop['type'] == 'integer':
             new_properties['schema']['format'] = 'int64'
 
+
+
     if schema_is_int64(component):
         fix_schema_int64(component)
         
@@ -125,10 +136,15 @@ def fix_enum_prop(component: dict[str, Any]):
     for k, prop in new_properties.items():
         if not type(prop) is dict:
             continue
+        if 'format' in prop and prop['format'] == 'decimal':
+            prop['format'] = 'float'
         if 'required' not in prop and 'nullable' not in prop:
-            prop['required'] = True
+            if 'example' in prop and prop['example'] == None:
+                prop['nullable'] = True
+            else:
+                prop['required'] = True
 
-        if 'time' in k.lower() and not 'format' in prop:
+        if 'time' in k.lower() and not 'format' in prop and 'type' in prop:
             if prop['type'] == 'string':
                 prop['format'] = 'date-time'
             if prop['type'] == 'integer':
@@ -165,6 +181,56 @@ def fix_enum_prop(component: dict[str, Any]):
     for k, v in new_properties.items():
         component[k] = v
 
+def get_dict_path(obj: dict[Any, Any], keys: list[Any]) -> Any:
+    current_val = obj
+    for key in keys:
+        current_val = current_val[key]
+    return current_val
+
+def transfer_keys_values(source: dict[str, Any], dest: dict[str, Any], keys: list[str]):
+    for key in keys:
+        if key in source:
+            dest[key] = source[key]
+
+def fix_unnamed_refs(component: list[Any]|dict[str, Any], swagga_original: dict[str, Any]):
+    if type(component) is dict:
+        for k, v in component.items():
+            #print(f"Proceed: -----{k}------------")
+            fix_unnamed_refs(v, swagga_original)
+
+    if not type(component) is list:
+        return
+    new_component = []
+    indexes2replace = []
+    for i,c in enumerate(component):
+        if not type(c) is dict:
+            continue
+        if '$ref' in c and not 'name' in c:
+            raw_ref_path = c['$ref']
+            ref_path = raw_ref_path.replace("#/", "").split("/")
+            ref_object = get_dict_path(swagga_original, ref_path)
+            if not 'name' in ref_object:
+                print("WARNING: unnamed pure ref found")
+                continue
+            new_c = {}
+            transfer_keys_values(ref_object, new_c, ['required', 'in','nullable', 'name'])
+            new_c['schema'] = {'$ref': c['$ref']}
+            indexes2replace.append(i)
+            new_component.append(new_c)
+            #new_component[ref_object['name']] = new_c
+            if 'schema' in ref_object:
+                for key in ref_object['schema']:
+                    ref_object[key] = ref_object['schema'][key]
+                ref_object.pop('schema')
+            if 'enum' in ref_object and not 'type' in ref_object:
+                ref_object['type'] = 'string'
+            print(f"Found pure ref: {raw_ref_path} -> {ref_path}: {ref_object}")
+        else:
+            fix_unnamed_refs(c, swagga_original)
+
+    for i,c in enumerate(indexes2replace):
+        component[c] = new_component[i]
+
 
 known_components = [(k, v) for k, v in swagga['components']['schemas'].items()]
 for k, component in known_components:
@@ -180,6 +246,7 @@ for req_url, req_desc in swagga['paths'].items():
 
 print(all_enums)
 
+fix_unnamed_refs(swagga, swagga)
 
 
 
