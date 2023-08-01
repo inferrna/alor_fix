@@ -187,16 +187,18 @@ def get_dict_path(obj: dict[Any, Any], keys: list[Any]) -> Any:
         current_val = current_val[key]
     return current_val
 
+var_properties = ['required', 'in','nullable', 'name']
+
 def transfer_keys_values(source: dict[str, Any], dest: dict[str, Any], keys: list[str]):
     for key in keys:
         if key in source:
             dest[key] = source[key]
 
-def fix_unnamed_refs(component: list[Any]|dict[str, Any], swagga_original: dict[str, Any]):
+def fix_unnamed_refs(component: list[Any]|dict[str, Any], swagga_original: dict[str, Any], objects_to_clean: set[str]):
     if type(component) is dict:
         for k, v in component.items():
             #print(f"Proceed: -----{k}------------")
-            fix_unnamed_refs(v, swagga_original)
+            fix_unnamed_refs(v, swagga_original, objects_to_clean)
 
     if not type(component) is list:
         return
@@ -208,12 +210,13 @@ def fix_unnamed_refs(component: list[Any]|dict[str, Any], swagga_original: dict[
         if '$ref' in c and not 'name' in c:
             raw_ref_path = c['$ref']
             ref_path = raw_ref_path.replace("#/", "").split("/")
+            objects_to_clean.add(raw_ref_path)
             ref_object = get_dict_path(swagga_original, ref_path)
             if not 'name' in ref_object:
                 print("WARNING: unnamed pure ref found")
                 continue
             new_c = {}
-            transfer_keys_values(ref_object, new_c, ['required', 'in','nullable', 'name'])
+            transfer_keys_values(ref_object, new_c, var_properties)
             new_c['schema'] = {'$ref': c['$ref']}
             indexes2replace.append(i)
             new_component.append(new_c)
@@ -226,17 +229,67 @@ def fix_unnamed_refs(component: list[Any]|dict[str, Any], swagga_original: dict[
                 ref_object['type'] = 'string'
             print(f"Found pure ref: {raw_ref_path} -> {ref_path}: {ref_object}")
         else:
-            fix_unnamed_refs(c, swagga_original)
+            fix_unnamed_refs(c, swagga_original, objects_to_clean)
 
     for i,c in enumerate(indexes2replace):
         component[c] = new_component[i]
 
+def compare_types(type_x: dict[str, Any], type_y: dict[str, Any]) -> bool:
+    is_similar = True
+    for k in ['type', 'format']:
+        both_has_same_k = (k in type_x) == (k in type_y)
+        is_similar = is_similar and both_has_same_k
+        if is_similar and k in type_x and k in type_y:
+            is_similar = is_similar and type_x[k] == type_y[k]
+    k = 'enum'
+    is_similar = is_similar and (k in type_x) == (k in type_y)
+    if is_similar and k in type_x and k in type_y:
+        print("Mostly similar, compare enum values..")
+        vals_x = set(type_x[k])
+        vals_y = set(type_y[k])
+        is_similar = is_similar and (vals_x.issubset(vals_y) or vals_y.issubset(vals_x))
+    return is_similar
 
+
+
+
+def join_same_types(types: dict[str, dict[str, Any]]) -> dict[tuple[str,str], list[tuple[str,str]]]:
+    fixed_keys = []
+    replacements: dict[tuple[str,str], list[tuple[str,str]]] = {}
+    two_lvl_keys = [(ka, kb) for ka in types.keys() for kb in types[ka].keys()]
+
+    print(two_lvl_keys)
+    for key_a in two_lvl_keys:
+        if key_a in fixed_keys:
+            continue
+        similar_types: list[tuple[str,str]] = [key_a]
+        type_a = types[key_a[0]][key_a[1]]
+        for key_b in two_lvl_keys:
+            if key_b in fixed_keys or key_b in similar_types:
+                continue
+            type_b = types[key_b[0]][key_b[1]]
+            if compare_types(type_a, type_b):
+                print(f"Type {key_a} is similar to {key_b}")
+                fixed_keys.append(key_b)
+                similar_types.append(key_b)
+        if len(similar_types)>1:
+            similar_types.sort(key = lambda x: len(x[1]))
+            is_enum = 'enum' in type_a
+            if is_enum:
+                similar_types.sort(key = lambda x: (-len(types[x[0]][x[1]]['enum']), len(x[1])))
+            best_type_name = similar_types.pop(0)
+            replacements[best_type_name] = similar_types
+    return replacements
+
+        
+
+# Фиксим enum
 known_components = [(k, v) for k, v in swagga['components']['schemas'].items()]
 for k, component in known_components:
     if 'properties' in component:
         fix_enum_prop(component['properties'])
 
+# Фиксим enum
 for req_url, req_desc in swagga['paths'].items():
     #print(req_desc)
     for method, component in req_desc.items():
@@ -246,10 +299,71 @@ for req_url, req_desc in swagga['paths'].items():
 
 print(all_enums)
 
-fix_unnamed_refs(swagga, swagga)
+o2cl = set()
+fix_unnamed_refs(swagga, swagga, o2cl)
+
+## Убираем лишние свойства у типов
+for raw_ref_path in o2cl:
+    ref_path = raw_ref_path.replace("#/", "").split("/")
+    ref_object: dict[str, Any] = get_dict_path(swagga, ref_path)
+    for prop in var_properties:
+        if prop in ref_object:
+            ref_object.pop(prop)
+
+def is_primitive_type(tp: dict[str, str])->bool:
+    is_prim = 'type' in tp and tp['type'] in ['string', 'integer', 'float', 'boolean']
+    return is_prim and not 'enum' in tp
+
+def fix_refs_to_primitive(data: dict[str, Any]|list[Any], swagga: dict[str, Any]):
+    if type(data) is dict:
+        pairs = [(k, v) for k, v in data.items() if k == "$ref" and type(v) is str]
+        if len(pairs)>0:
+            r, raw_ref_path = pairs[0]
+            ref_path = raw_ref_path.replace("#/", "").split("/")
+            tp = get_dict_path(swagga, ref_path)
+            if is_primitive_type(tp):
+                print(f"Replace {raw_ref_path} with primitive {tp['type']}")
+                data.pop(r)
+                for k, v in tp.items():
+                    data[k] = v
+        for k, v in data.items():
+            fix_refs_to_primitive(v, swagga)
+
+    if type(data) is list:
+        for v in data:
+            fix_refs_to_primitive(v, swagga)
+
+fix_refs_to_primitive(swagga, swagga)
 
 
+def replace_type_ref(refs2replace: dict[str,str], data: dict[str, Any]|list[Any]):
+    if type(data) is dict:
+        pairs = [(k, v) for k, v in data.items() if k == "$ref" and type(v) is str and v in refs2replace]
+        if len(pairs)>0:
+            k, v = pairs[0]
+            repacement = refs2replace[v]
+            print(f"Replace {v} with {repacement}")
+            data[k] = repacement
+        for k, v in data.items():
+            replace_type_ref(refs2replace, v)
 
+    if type(data) is list:
+        for v in data:
+            replace_type_ref(refs2replace, v)
+
+# Находим одинаковые типы
+repls = join_same_types(swagga['components'])
+
+# Удаляем лишние типы
+for (ra, ka,), victims in repls.items():
+    for (rb, kb,) in victims:
+        swagga['components'][rb].pop(kb)
+
+# Создаём плоскую мапу соответствия старых ref новым
+flat_repls = {f"#/components/{rb}/{kb}":f"#/components/{ra}/{ka}" for ra, ka in repls.keys() for rb, kb in repls[(ra, ka,)]}
+
+# Заменяем типы по мапе
+replace_type_ref(flat_repls, swagga)
 
 yaml.dump(swagga, open('fixed.yaml', 'w'))
 with open('fixed.yaml', 'w', encoding='utf-8') as fp:
