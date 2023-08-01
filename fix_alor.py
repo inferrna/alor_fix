@@ -1,5 +1,6 @@
 import yaml
 from typing import Any
+import json
 
 swagga = yaml.safe_load(open("WarpOpenAPIv2.yml", "r"))
 
@@ -234,13 +235,26 @@ def fix_unnamed_refs(component: list[Any]|dict[str, Any], swagga_original: dict[
     for i,c in enumerate(indexes2replace):
         component[c] = new_component[i]
 
+
+def remove_all_keys(data: dict[str, Any]|list[Any], keys2rm: list[str]):
+    if type(data) is dict:
+        for k in keys2rm:
+            if k in data:
+                data.pop(k)
+        for k, v in data.items():
+            remove_all_keys(v, keys2rm)
+    if type(data) is list:
+        for v in data:
+            remove_all_keys(v, keys2rm)
+
+
 def compare_types(type_x: dict[str, Any], type_y: dict[str, Any]) -> bool:
-    is_similar = True
-    for k in ['type', 'format']:
-        both_has_same_k = (k in type_x) == (k in type_y)
-        is_similar = is_similar and both_has_same_k
-        if is_similar and k in type_x and k in type_y:
-            is_similar = is_similar and type_x[k] == type_y[k]
+    is_similar = type_x['type'] == type_y['type']
+    k = 'format'
+    both_has_same_k = (k in type_x) == (k in type_y)
+    is_similar = is_similar and both_has_same_k
+    if is_similar and k in type_x and k in type_y:
+        is_similar = is_similar and type_x[k] == type_y[k]
     k = 'enum'
     is_similar = is_similar and (k in type_x) == (k in type_y)
     if is_similar and k in type_x and k in type_y:
@@ -248,6 +262,13 @@ def compare_types(type_x: dict[str, Any], type_y: dict[str, Any]) -> bool:
         vals_x = set(type_x[k])
         vals_y = set(type_y[k])
         is_similar = is_similar and (vals_x.issubset(vals_y) or vals_y.issubset(vals_x))
+    is_object = (type_x['type'] == 'object') and (type_y['type'] == 'object')
+    if is_object and is_similar:
+        tx = json.loads(json.dumps(type_x))
+        ty = json.loads(json.dumps(type_y))
+        remove_all_keys(tx, ["description", "example"])
+        remove_all_keys(ty, ["description", "example"])
+        is_similar = is_similar and tx == ty
     return is_similar
 
 
@@ -258,7 +279,7 @@ def join_same_types(types: dict[str, dict[str, Any]]) -> dict[tuple[str,str], li
     replacements: dict[tuple[str,str], list[tuple[str,str]]] = {}
     two_lvl_keys = [(ka, kb) for ka in types.keys() for kb in types[ka].keys()]
 
-    print(two_lvl_keys)
+    #print(two_lvl_keys)
     for key_a in two_lvl_keys:
         if key_a in fixed_keys:
             continue
@@ -357,7 +378,8 @@ repls = join_same_types(swagga['components'])
 # Удаляем лишние типы
 for (ra, ka,), victims in repls.items():
     for (rb, kb,) in victims:
-        swagga['components'][rb].pop(kb)
+        if kb in swagga['components'][rb]:
+            swagga['components'][rb].pop(kb)
 
 # Создаём плоскую мапу соответствия старых ref новым
 flat_repls = {f"#/components/{rb}/{kb}":f"#/components/{ra}/{ka}" for ra, ka in repls.keys() for rb, kb in repls[(ra, ka,)]}
