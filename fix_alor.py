@@ -33,6 +33,8 @@ for k in swagga["paths"]:
 print(all_tag_descriptions)
 
 
+
+
 def find_short_description(dt: dict[str, Any], path: str):
     if not type(dt) is dict:
         return True
@@ -269,6 +271,9 @@ def compare_types(type_x: dict[str, Any], type_y: dict[str, Any]) -> bool:
         remove_all_keys(tx, ["description", "example"])
         remove_all_keys(ty, ["description", "example"])
         is_similar = is_similar and tx == ty
+    is_array = (type_x['type'] == 'array') and (type_y['type'] == 'array')
+    if is_array and is_similar:
+        is_similar = type_x['items']['$ref'] == type_y['items']['$ref']
     return is_similar
 
 
@@ -386,6 +391,24 @@ flat_repls = {f"#/components/{rb}/{kb}":f"#/components/{ra}/{ka}" for ra, ka in 
 
 # Заменяем типы по мапе
 replace_type_ref(flat_repls, swagga)
+
+def fix_components(data: dict[str, Any]):
+    if type(data) is dict:
+        if '$ref' in data:
+            data['$ref'] = data['$ref'].replace("/parameters/", "/schemas/")
+        for k, v in data.items():
+            fix_components(v)
+    if type(data) is list:
+        for v in data:
+            fix_components(v)
+
+
+# Уносим модели из parameters
+fix_components(swagga)
+for k, v in swagga['components']['parameters'].items():
+    swagga['components']['schemas'][k] = v
+
+swagga['components'].pop('parameters')
 
 yaml.dump(swagga, open('fixed.yaml', 'w'))
 with open('fixed.yaml', 'w', encoding='utf-8') as fp:
