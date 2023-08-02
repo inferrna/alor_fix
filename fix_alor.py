@@ -251,7 +251,12 @@ def remove_all_keys(data: dict[str, Any]|list[Any], keys2rm: list[str]):
 
 
 def compare_types(type_x: dict[str, Any], type_y: dict[str, Any]) -> bool:
-    is_similar = type_x['type'] == type_y['type']
+    if 'type' in type_x and 'type' in type_y:
+        is_similar = type_x['type'] == type_y['type']
+        is_object = (type_x['type'] == 'object') and (type_y['type'] == 'object')
+        is_array = (type_x['type'] == 'array') and (type_y['type'] == 'array')
+    else:
+        is_similar, is_object, is_array = False, False, False
     k = 'format'
     both_has_same_k = (k in type_x) == (k in type_y)
     is_similar = is_similar and both_has_same_k
@@ -264,14 +269,12 @@ def compare_types(type_x: dict[str, Any], type_y: dict[str, Any]) -> bool:
         vals_x = set(type_x[k])
         vals_y = set(type_y[k])
         is_similar = is_similar and (vals_x.issubset(vals_y) or vals_y.issubset(vals_x))
-    is_object = (type_x['type'] == 'object') and (type_y['type'] == 'object')
     if is_object and is_similar:
         tx = json.loads(json.dumps(type_x))
         ty = json.loads(json.dumps(type_y))
         remove_all_keys(tx, ["description", "example"])
         remove_all_keys(ty, ["description", "example"])
         is_similar = is_similar and tx == ty
-    is_array = (type_x['type'] == 'array') and (type_y['type'] == 'array')
     if is_array and is_similar:
         is_similar = type_x['items']['$ref'] == type_y['items']['$ref']
     return is_similar
@@ -337,10 +340,10 @@ for raw_ref_path in o2cl:
             ref_object.pop(prop)
 
 def is_primitive_type(tp: dict[str, str])->bool:
-    is_prim = 'type' in tp and tp['type'] in ['string', 'integer', 'float', 'boolean']
+    is_prim = 'type' in tp and tp['type'] in ['string', 'number', 'integer', 'float', 'boolean']
     return is_prim and not 'enum' in tp
 
-def fix_refs_to_primitive(data: dict[str, Any]|list[Any], swagga: dict[str, Any]):
+def fix_refs_to_primitive(data: dict[str, Any]|list[Any], swagga: dict[str, Any], doomed_types: list[str]):
     if type(data) is dict:
         pairs = [(k, v) for k, v in data.items() if k == "$ref" and type(v) is str]
         if len(pairs)>0:
@@ -348,19 +351,41 @@ def fix_refs_to_primitive(data: dict[str, Any]|list[Any], swagga: dict[str, Any]
             ref_path = raw_ref_path.replace("#/", "").split("/")
             tp = get_dict_path(swagga, ref_path)
             if is_primitive_type(tp):
-                print(f"Replace {raw_ref_path} with primitive {tp['type']}")
+                if raw_ref_path not in doomed_types:
+                    print(f"Replace {raw_ref_path} with primitive {tp['type']}")
+                    doomed_types.append(raw_ref_path)
                 data.pop(r)
                 for k, v in tp.items():
                     data[k] = v
         for k, v in data.items():
-            fix_refs_to_primitive(v, swagga)
+            fix_refs_to_primitive(v, swagga, doomed_types)
 
     if type(data) is list:
         for v in data:
-            fix_refs_to_primitive(v, swagga)
+            fix_refs_to_primitive(v, swagga, doomed_types)
 
-fix_refs_to_primitive(swagga, swagga)
+def remove_primitives():
+# Заменяем рефы на алиасы примитивных типов прямой деклрацией
+    refs2delete = []
+    fix_refs_to_primitive(swagga, swagga, refs2delete)
 
+#print(set(refs2delete))
+
+# Удаляем алиасы примитивных типов
+    for raw_ref in set(refs2delete):
+        ref_path = raw_ref.replace("#/", "").split("/")
+        v = swagga
+        for key in ref_path[:-1]:
+            v = v[key]
+        last_k = ref_path[-1]
+        if last_k == "Take":
+            print(raw_ref)
+            print(v)
+        if last_k in v:
+            v.pop(last_k)
+
+remove_primitives()
+remove_primitives()
 
 def replace_type_ref(refs2replace: dict[str,str], data: dict[str, Any]|list[Any]):
     if type(data) is dict:
@@ -377,20 +402,21 @@ def replace_type_ref(refs2replace: dict[str,str], data: dict[str, Any]|list[Any]
         for v in data:
             replace_type_ref(refs2replace, v)
 
+for root in ['components']:
 # Находим одинаковые типы
-repls = join_same_types(swagga['components'])
+    repls = join_same_types(swagga[root])
 
 # Удаляем лишние типы
-for (ra, ka,), victims in repls.items():
-    for (rb, kb,) in victims:
-        if kb in swagga['components'][rb]:
-            swagga['components'][rb].pop(kb)
+    for (ra, ka,), victims in repls.items():
+        for (rb, kb,) in victims:
+            if kb in swagga[root][rb]:
+                swagga[root][rb].pop(kb)
 
 # Создаём плоскую мапу соответствия старых ref новым
-flat_repls = {f"#/components/{rb}/{kb}":f"#/components/{ra}/{ka}" for ra, ka in repls.keys() for rb, kb in repls[(ra, ka,)]}
+    flat_repls = {f"#/{root}/{rb}/{kb}":f"#/{root}/{ra}/{ka}" for ra, ka in repls.keys() for rb, kb in repls[(ra, ka,)]}
 
 # Заменяем типы по мапе
-replace_type_ref(flat_repls, swagga)
+    replace_type_ref(flat_repls, swagga)
 
 def fix_components(data: dict[str, Any]):
     if type(data) is dict:
@@ -401,6 +427,7 @@ def fix_components(data: dict[str, Any]):
     if type(data) is list:
         for v in data:
             fix_components(v)
+
 
 
 # Уносим модели из parameters
