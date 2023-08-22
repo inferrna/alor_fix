@@ -1,14 +1,21 @@
 import yaml
 from typing import Any
 import json
+import sys
 
-swagga = yaml.safe_load(open("WarpOpenAPIv2.yml", "r"))
+filename_in = sys.argv[1]
+filename_out = f"fixed_{filename_in}"
+
+swagga = yaml.safe_load(open(filename_in, "r"))
 
 tagged_descriptions = {
  'Ценные бумаги / инструменты': 'securities',
  'Instruments': 'securities',
  'Работа с заявками': 'orders',
  'Orders': 'orders',
+ 'OrdersWebSocket': 'ws_orders',   
+ 'OrderGroups': 'ws_orders',   
+ 'OrdersWebSocket': 'order_groups',   
  'Информация о клиенте': 'users',
  'ClientInfo': 'users',
  'Подписки и события (WebSocket)': 'subscriptions',
@@ -76,7 +83,11 @@ for known_enum, known_enum_values in known_enums.items():
 
 
 def add_new_enum(name: str, values: list[str]):
-    swagga['components']['schemas'][name] = {'type': 'string', 'enum': values}
+    if name not in swagga['components']['schemas']:
+        swagga['components']['schemas'][name] = {'type': 'string', 'enum': values}
+    else:
+        allvals = set(swagga['components']['schemas'][name]['enum'] + values)
+        swagga['components']['schemas'][name]['enum'] = list(allvals)
 
 def get_known_enum(values: list[str]) -> str|None:
     for enum_name, enum_data in swagga['components']['schemas'].items():
@@ -123,6 +134,9 @@ def fix_enum_prop(component: dict[str, Any]):
     if not type(component) is dict:
         return
 
+    if schema_is_int64(component):
+        fix_schema_int64(component)
+
     new_properties = component
 
     if 'schema' in new_properties and 'name' in new_properties:
@@ -130,10 +144,6 @@ def fix_enum_prop(component: dict[str, Any]):
         if field_is_int64(new_properties['name']) and not 'format' in prop and prop['type'] == 'integer':
             new_properties['schema']['format'] = 'int64'
 
-
-
-    if schema_is_int64(component):
-        fix_schema_int64(component)
         
 
     for k, prop in new_properties.items():
@@ -228,8 +238,6 @@ def fix_unnamed_refs(component: list[Any]|dict[str, Any], swagga_original: dict[
                 for key in ref_object['schema']:
                     ref_object[key] = ref_object['schema'][key]
                 ref_object.pop('schema')
-            if 'enum' in ref_object and not 'type' in ref_object:
-                ref_object['type'] = 'string'
             print(f"Found pure ref: {raw_ref_path} -> {ref_path}: {ref_object}")
         else:
             fix_unnamed_refs(c, swagga_original, objects_to_clean)
@@ -364,7 +372,7 @@ def fix_refs_to_primitive(data: dict[str, Any]|list[Any], swagga: dict[str, Any]
         for v in data:
             fix_refs_to_primitive(v, swagga, doomed_types)
 
-def remove_primitives():
+def remove_primitives(swagga):
 # Заменяем рефы на алиасы примитивных типов прямой деклрацией
     refs2delete = []
     fix_refs_to_primitive(swagga, swagga, refs2delete)
@@ -384,8 +392,8 @@ def remove_primitives():
         if last_k in v:
             v.pop(last_k)
 
-remove_primitives()
-remove_primitives()
+remove_primitives(swagga)
+remove_primitives(swagga)
 
 def replace_type_ref(refs2replace: dict[str,str], data: dict[str, Any]|list[Any]):
     if type(data) is dict:
@@ -422,6 +430,14 @@ def fix_components(data: dict[str, Any]):
     if type(data) is dict:
         if '$ref' in data:
             data['$ref'] = data['$ref'].replace("/parameters/", "/schemas/")
+        if 'lotsize' in data:
+            data['lotsize']['type'] = 'number'
+            data['lotsize']['format'] = 'float'
+        if 'enum' in data:
+            if not 'type' in data:
+                data['type'] = 'string'
+            elif data['type'] != 'string':
+                data.pop('enum')
         for k, v in data.items():
             fix_components(v)
     if type(data) is list:
@@ -429,15 +445,16 @@ def fix_components(data: dict[str, Any]):
             fix_components(v)
 
 
-
 # Уносим модели из parameters
 fix_components(swagga)
+
 for k, v in swagga['components']['parameters'].items():
     swagga['components']['schemas'][k] = v
 
 swagga['components'].pop('parameters')
 
-yaml.dump(swagga, open('fixed.yaml', 'w'))
+remove_primitives(swagga)
+
 with open('fixed.yaml', 'w', encoding='utf-8') as fp:
     yaml.dump(swagga, stream=fp, allow_unicode=True)
 
