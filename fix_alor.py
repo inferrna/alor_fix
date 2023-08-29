@@ -2,6 +2,7 @@ import yaml
 from typing import Any
 import json
 import sys
+#from collections import OrderedDict
 
 filename_in = sys.argv[1]
 filename_out = f"fixed_{filename_in}"
@@ -149,6 +150,7 @@ def fix_enum_prop(component: dict[str, Any]):
     for k, prop in new_properties.items():
         if not type(prop) is dict:
             continue
+        fix_enum_prop(prop)
         if 'format' in prop and prop['format'] == 'decimal':
             prop['format'] = 'float'
         if 'required' not in prop and 'nullable' not in prop:
@@ -181,7 +183,7 @@ def fix_enum_prop(component: dict[str, Any]):
                     add_new_enum(found_enum, values)
 
             if found_enum is not None:
-                print("Enum was found")
+                print(f"Enum {found_enum} was found for {k}")
                 new_properties[k] = {'$ref': f'#/components/schemas/{found_enum}'}
         elif k in exnames or name in exnames:
             print("Exchange enum was forced")
@@ -189,8 +191,7 @@ def fix_enum_prop(component: dict[str, Any]):
         elif k in fmnames or name in fmnames:
             print("Format enum was forced")
             new_properties[k] = {'$ref': f'#/components/schemas/JsonFormat'}
-        for ks in prop:
-            fix_enum_prop(prop[ks])
+        component[k] = new_properties[k]
     for k, v in new_properties.items():
         component[k] = v
 
@@ -323,8 +324,10 @@ def join_same_types(types: dict[str, dict[str, Any]]) -> dict[tuple[str,str], li
 # Фиксим enum
 known_components = [(k, v) for k, v in swagga['components']['schemas'].items()]
 for k, component in known_components:
-    if 'properties' in component:
-        fix_enum_prop(component['properties'])
+    for k in ['properties', 'allOf']:
+        if k in component:
+            fix_enum_prop(component[k])
+            
 
 # Фиксим enum
 for req_url, req_desc in swagga['paths'].items():
@@ -333,6 +336,7 @@ for req_url, req_desc in swagga['paths'].items():
         if 'parameters' in component:
             print(f"Found params for {req_url}")
             fix_enum_prop(component['parameters'])
+
 
 print(all_enums)
 
