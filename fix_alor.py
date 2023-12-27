@@ -15,6 +15,7 @@ tagged_descriptions = {
  'Работа с заявками': 'orders',
  'Orders': 'orders',
  'OrdersWebSocket': 'ws_orders',   
+ 'Authorization': 'auth',
  'OrderGroups': 'ws_orders',   
  'OrdersWebSocket': 'order_groups',   
  'Информация о клиенте': 'users',
@@ -142,7 +143,7 @@ def fix_enum_prop(component: dict[str, Any]):
 
     if 'schema' in new_properties and 'name' in new_properties:
         prop = new_properties['schema']
-        if field_is_int64(new_properties['name']) and not 'format' in prop and prop['type'] == 'integer':
+        if field_is_int64(new_properties['name']) and not 'format' in prop and 'type' in prop and prop['type'] == 'integer':
             new_properties['schema']['format'] = 'int64'
 
         
@@ -260,6 +261,8 @@ def remove_all_keys(data: dict[str, Any]|list[Any], keys2rm: list[str]):
 
 
 def compare_types(type_x: dict[str, Any], type_y: dict[str, Any]) -> bool:
+    if not type(type_x) is dict or not type(type_y) is dict:
+        return False
     if 'type' in type_x and 'type' in type_y:
         is_similar = type_x['type'] == type_y['type']
         is_object = (type_x['type'] == 'object') and (type_y['type'] == 'object')
@@ -324,18 +327,19 @@ def join_same_types(types: dict[str, dict[str, Any]]) -> dict[tuple[str,str], li
 # Фиксим enum
 known_components = [(k, v) for k, v in swagga['components']['schemas'].items()]
 for k, component in known_components:
-    for k in ['properties', 'allOf']:
+    for k in ['properties' , 'allOf']:
         if k in component:
             fix_enum_prop(component[k])
             
 
-# Фиксим enum
 for req_url, req_desc in swagga['paths'].items():
     #print(req_desc)
     for method, component in req_desc.items():
         if 'parameters' in component:
             print(f"Found params for {req_url}")
             fix_enum_prop(component['parameters'])
+
+
 
 
 print(all_enums)
@@ -393,8 +397,8 @@ def remove_primitives(swagga):
         if last_k == "Take":
             print(raw_ref)
             print(v)
-        if last_k in v:
-            v.pop(last_k)
+        #if last_k in v:
+            #v.pop(last_k)
 
 remove_primitives(swagga)
 remove_primitives(swagga)
@@ -432,9 +436,21 @@ for root in ['components']:
 
 def fix_components(data: dict[str, Any]):
     if type(data) is dict:
+        if 'allOf' in data and len([k for r in data['allOf'] for k in r.keys() if k=='$ref'])==0:
+            d = data.pop('allOf')
+            if type(d) is dict:
+                data.update(d)
+            else:
+                for dd in d:
+                    data.update(dd)
+            print(f"oneOf became: {data}")
+        if 'oneOf' in data:
+            v = [v for r in data.pop('oneOf') for v in r.values() if not 'simple' in v and not 'heavy' in v]
+            data['$ref'] = v[0]
+            print(f"oneOf became: {data}")
         if '$ref' in data:
             data['$ref'] = data['$ref'].replace("/parameters/", "/schemas/")
-        if 'lotsize' in data:
+        if 'lotsize' in data and type(data['lotsize']) is dict:
             data['lotsize']['type'] = 'number'
             data['lotsize']['format'] = 'float'
         if 'enum' in data:
@@ -442,6 +458,10 @@ def fix_components(data: dict[str, Any]):
                 data['type'] = 'string'
             elif data['type'] != 'string':
                 data.pop('enum')
+        keys = list(data.keys())
+        for k in keys:
+            if 'slim' in k or 'heavy' in k or k=='examples':
+                data.pop(k)
         for k, v in data.items():
             fix_components(v)
     if type(data) is list:
