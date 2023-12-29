@@ -434,16 +434,38 @@ for root in ['components']:
 # Заменяем типы по мапе
     replace_type_ref(flat_repls, swagga)
 
-def fix_components(data: dict[str, Any]):
+import copy
+swagga_original = copy.deepcopy(swagga)
+
+def update_data_from_other(data: dict, r: str, d: dict|list):
+    if r in data:
+        if type(data[r]) is dict and type(d) is dict:
+            for kk, vv in d.items():
+                data[r][kk] = copy.deepcopy(vv)
+        elif type(data[r]) is list and type(d) is list:
+            for vv in d:
+                data[r].append(copy.deepcopy(vv))
+    else:    
+        data[copy.deepcopy(r)] = copy.deepcopy(d)
+
+
+## ws_req_OrderBookGetAndSubscribe
+
+def fix_components(data: dict[str, Any]|list):
+    if not(type(data) is dict or type(data) is list):
+        return
     if type(data) is dict:
-        if 'allOf' in data and len([k for r in data['allOf'] for k in r.keys() if k=='$ref'])==0:
-            d = data.pop('allOf')
-            if type(d) is dict:
-                data.update(d)
-            else:
-                for dd in d:
-                    data.update(dd)
-            print(f"oneOf became: {data}")
+        if 'allOf' in data:
+            donor = data.pop('allOf')
+            for dd in donor:
+                for r, d in dd.items():
+                    if r=="$ref":
+                        ref_object = get_dict_path(swagga_original, d.replace("#/", "").split("/"))
+                        for k, v in ref_object.items():
+                            update_data_from_other(data, k, v)
+                    else:
+                        update_data_from_other(data, r, d)
+            print(f"allOf from {donor} became: {data}")
         if 'oneOf' in data:
             v = [v for r in data.pop('oneOf') for v in r.values() if not 'simple' in v and not 'heavy' in v]
             data['$ref'] = v[0]
@@ -464,10 +486,9 @@ def fix_components(data: dict[str, Any]):
                 data.pop(k)
         for k, v in data.items():
             fix_components(v)
-    if type(data) is list:
+    elif type(data) is list:
         for v in data:
             fix_components(v)
-
 
 # Уносим модели из parameters
 fix_components(swagga)
@@ -475,7 +496,7 @@ fix_components(swagga)
 for k, v in swagga['components']['parameters'].items():
     swagga['components']['schemas'][k] = v
 
-swagga['components'].pop('parameters')
+#swagga['components'].pop('parameters')
 
 remove_primitives(swagga)
 
