@@ -9,6 +9,9 @@ filename_out = f"fixed_{filename_in}"
 
 swagga = yaml.safe_load(open(filename_in, "r"))
 
+def check_swagga():
+    assert not "&id001" in yaml.dump(swagga)
+
 tagged_descriptions = {
  'Ценные бумаги / инструменты': 'securities',
  'Instruments': 'securities',
@@ -330,7 +333,8 @@ for k, component in known_components:
     for k in ['properties' , 'allOf']:
         if k in component:
             fix_enum_prop(component[k])
-            
+
+check_swagga()
 
 for req_url, req_desc in swagga['paths'].items():
     #print(req_desc)
@@ -339,11 +343,11 @@ for req_url, req_desc in swagga['paths'].items():
             print(f"Found params for {req_url}")
             fix_enum_prop(component['parameters'])
 
-
+check_swagga()
 
 
 print(all_enums)
-
+check_swagga()
 o2cl = set()
 fix_unnamed_refs(swagga, swagga, o2cl)
 
@@ -354,6 +358,7 @@ for raw_ref_path in o2cl:
     for prop in var_properties:
         if prop in ref_object:
             ref_object.pop(prop)
+check_swagga()
 
 def is_primitive_type(tp: dict[str, str])->bool:
     is_prim = 'type' in tp and tp['type'] in ['string', 'number', 'integer', 'float', 'boolean']
@@ -402,7 +407,7 @@ def remove_primitives(swagga):
 
 remove_primitives(swagga)
 remove_primitives(swagga)
-
+check_swagga()
 def replace_type_ref(refs2replace: dict[str,str], data: dict[str, Any]|list[Any]):
     if type(data) is dict:
         pairs = [(k, v) for k, v in data.items() if k == "$ref" and type(v) is str and v in refs2replace]
@@ -417,7 +422,7 @@ def replace_type_ref(refs2replace: dict[str,str], data: dict[str, Any]|list[Any]
     if type(data) is list:
         for v in data:
             replace_type_ref(refs2replace, v)
-
+check_swagga()
 for root in ['components']:
 # Находим одинаковые типы
     repls = join_same_types(swagga[root])
@@ -434,6 +439,7 @@ for root in ['components']:
 # Заменяем типы по мапе
     replace_type_ref(flat_repls, swagga)
 
+check_swagga()
 import copy
 swagga_original = copy.deepcopy(swagga)
 
@@ -441,10 +447,10 @@ def update_data_from_other(data: dict, r: str, d: dict|list):
     if r in data:
         if type(data[r]) is dict and type(d) is dict:
             for kk, vv in d.items():
-                data[r][kk] = copy.deepcopy(vv)
+                data[copy.deepcopy(r)][copy.deepcopy(kk)] = copy.deepcopy(vv)
         elif type(data[r]) is list and type(d) is list:
             for vv in d:
-                data[r].append(copy.deepcopy(vv))
+                data[copy.deepcopy(r)].append(copy.deepcopy(vv))
     else:    
         data[copy.deepcopy(r)] = copy.deepcopy(d)
 
@@ -489,16 +495,17 @@ def fix_components(data: dict[str, Any]|list):
     elif type(data) is list:
         for v in data:
             fix_components(v)
-
+check_swagga()
 # Уносим модели из parameters
 fix_components(swagga)
-
+check_swagga()
 for k, v in swagga['components']['parameters'].items():
-    swagga['components']['schemas'][k] = v
+    swagga['components']['schemas'][k] = copy.deepcopy(v)
 
 #swagga['components'].pop('parameters')
-
+check_swagga()
 remove_primitives(swagga)
+check_swagga()
 
 with open('fixed.yaml', 'w', encoding='utf-8') as fp:
     yaml.dump(swagga, stream=fp, allow_unicode=True)
